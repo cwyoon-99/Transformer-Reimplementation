@@ -2,26 +2,44 @@ import tqdm
 import collections
 import string
 import logging
+import os
 
-class BPE():
-    def __init__(self, dataset, word_count):
+class BPE:
+    def __init__(self, dataset, mode, word_count):
         # pre-tokenize
-        self.en_corpus = []
+        self.corpus = []
+        self.lang = "en" if mode == "src" else "de"
+
+        self.save_dir = f"{self.lang}_bpe/"
+        os.makedirs(self.save_dir, exist_ok=True)
+
         for i in dataset:
             item = i['translation']
-            pre_corpus = item['en'].split(" ") # split by space
+            pre_corpus = item[self.lang].split(" ") # split by space (pre_tokenize)
             for j in pre_corpus:
                 j = j + "</w>"  # add a special end token "</w>"
-            self.en_corpus.extend(pre_corpus)
+            self.corpus.extend(pre_corpus)
 
-        self.pre_corpus_count = collections.Counter(self.en_corpus) # count the number of each element
+        self.pre_corpus_count = collections.Counter(self.corpus) # count the number of each element
 
         self.corpus_count = {}
         for k,v in self.pre_corpus_count.items():
             self.corpus_count[" ".join(list(k))] = v
 
+        # define special token
+        special_token = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
+        
         self.vocab = []
+        self.vocab.append(special_token)
+
+        # base vocabulary
+        for word in self.corpus_count.keys():
+            for letter in word:
+                if letter not in self.vocab:
+                    self.vocab.append(letter)
+
         self.word_count = word_count
+
 
     # get the most frequent bigram
     def count_frequency(self):        
@@ -39,9 +57,10 @@ class BPE():
         freq_bigram = max(bigram_dict, key = lambda x: bigram_dict[x])
 
         print(f"frequent bigram: {freq_bigram}")
-        self.vocab.append(freq_bigram)
+        self.vocab.append(freq_bigram.replace(" ",""))
 
         return freq_bigram
+
 
     def merge(self, freq_bigram):
         new_corpus_count = {}
@@ -51,59 +70,65 @@ class BPE():
 
         self.corpus_count = new_corpus_count
 
-        # for k,v in self.corpus_count.items():
-        #     if freq_bigram in k:
-        #         print("yes")
-        #         print(k)
-        #         print(freq_bigram)
 
     def get_vocab(self):
+        self.merge_dir = os.path.join(self.save_dir, "merge_txt")
+        if os.path.isfile(self.merge_dir):
+            logging.info(f"Already have merge.txt. EXIT BPE training...")
+            return
+        else:
+            logging.info(f"Start {self.lang} BPE.")
+            with open(self.merge_dir,"w") as f:
+                while self.word_count > len(self.vocab):
+                    freq_bigram = self.count_frequency() # find the frequent bigram 
 
-        logging.info("Start BPE.")
-        with open("merge.txt","w") as f:
-            while self.word_count > len(self.vocab):
-                freq_bigram = self.count_frequency() 
-                f.write(f"{freq_bigram}\n")
+                    self.merge(freq_bigram) # merge it
 
-                self.merge(freq_bigram)
+                    f.write(f"{freq_bigram}\n") # write merge info
 
-        logging.info("finish BPE. save vocab.json...")
+            logging.info(f"finish {self.lang} BPE. save vocab.json...")
 
-        with open("vocab.json","w") as f:
-            for i in self.vocab:
-                f.write(f"{i}\n")
+            self.vocab_dir = os.path.join(self.save_dir, "vocab.json")
+            # write vocab
+            with open(self.vocab_dir,"w") as f:
+                for i in self.vocab:
+                    f.write(f"{i}\n")
 
-    # tokenize an input based on merge info of BPE 
+
+    # tokenize an input based on merge info of BPE
     def subword_tokenize(self, input):
         merge_info = []
-        with open('merge.txt', 'r') as f:
+
+        # load merge info
+        with open(self.merge_dir, 'r') as f:
             while True:
                 line = f.readline()
                 if not line: break
                 merge_info.append(line.strip())
 
-        print(merge_info)
-        # To find the longest subword merge, sort based on the length of each element
-        merge_info = sorted(merge_info, key= len)
+        tokenized_input = input.split() # pre-tokenize
 
-        words = input.split()
-        for word in words:
+        for idx in range(len(tokenized_input)):
+            word = tokenized_input[idx]
             if len(word) == 1:
                 continue
             else:
                 word_split = list(word)
 
-                # print(f"word split: \n{word_split}")
+                for merge in merge_info:
+                    i = 0
+                    while i < (len(word_split) - 1):
+                        merge_bigram = " ".join(word_split[i:i+2]) 
+                        if merge_bigram == merge:
+                            word_split[i] = merge_bigram.replace(" ","")
+                            del word_split[i + 1]
+                        else:
+                            i += 1
                 
-                bigrams = [" ".join(word_split[i:i+2]) for i in range(0, len(word_split) - 1)]
+                # update
+                tokenized_input[idx] = " ".join(word_split)
 
-                # remove bigrams that are not in the merge.txt
-                bigrams = [bigram for bigram in bigrams if bigram in merge_info]
-                print(bigrams)
+        tokenized_input = [sp for word in tokenized_input for sp in word.split()]
 
-                # find the most longest sub-word merge
-                priority_merge = max(bigrams, key = lambda x: merge_info.index(x))
-
-                print(priority_merge)
-                    
+        return tokenized_input
                 
