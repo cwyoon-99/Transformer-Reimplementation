@@ -1,34 +1,43 @@
 from datasets import load_dataset
 
 import argparse
-from bpe import BPE
+import logging
+
+from utils import preprocess
+from tokenizer import Tokenizer
 from dataset import IwsltDataset
 
 parser = argparse.ArgumentParser()
 
 parser.add_argument("--word_count", type= int, default = 37000)
+parser.add_argument("--src", type=str, default = "en")
+parser.add_argument("--tg", type=str, default = "de")
+parser.add_argument("--bpe_end_token", action="store_true", help= "whether a special end token </w> is added while training bpe")
 
 args = parser.parse_args()
 
 
 if __name__ == "__main__":
 
+    # log
+    logger = logging.getLogger('Transformers')
+    logger.setLevel(logging.INFO)
+    
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    logger.addHandler(ch)
+
+    logging.basicConfig(level = logging.INFO, datefmt = '%Y-%m-%d %H%M%S'
+                   ,format='%(asctime)s - %(message)s')
+
     # download and load the dataset
     dataset = load_dataset("iwslt2017", 'iwslt2017-en-de')
 
-    Vocabulary(dataset['train'])
+    train_dataset = preprocess(dataset['train'], args.src, args.tg)
+    valid_dataset = preprocess(dataset['validation'], args.src, args.tg)
+    test_dataaset = preprocess(dataset['test'], args.src, args.tg)
 
+    src_tokenizer= Tokenizer(train_dataset, args.src, args.word_count, args.bpe_end_token)
+    tg_tokenizer = Tokenizer(train_dataset, args.tg, args.word_count, args.bpe_end_token)
 
-
-    # train bpe
-    bpe = BPE(dataset['train'], args.word_count)
-    # bpe.get_vocab()
-
-    bpe.subword_tokenize("I have been blown away by this conference, \
-                         and I want to thank all of you for the many nice \
-                          comments about what I had to say the other night.")
-
-    # train_dataset = IwsltDataset(dataset = dataset['train'], tokenizer = bpe)
-
-
-    # print(train_dataset.__getitem__(5))
+    # IwsltDataset(train_dataset, src_tokenizer, tg_tokenizer, args.src, args.tg)
