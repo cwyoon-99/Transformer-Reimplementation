@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from datasets import load_dataset
 
 import argparse
@@ -5,14 +7,20 @@ import logging
 
 from utils import preprocess
 from tokenizer import Tokenizer
-from dataset import IwsltDataset
+from dataset import IwsltDataset, CustomCollate
+
+from torch.utils.data import DataLoader
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("--word_count", type= int, default = 37000)
+parser.add_argument("--word_count", type= int, default = 16000)
 parser.add_argument("--src", type=str, default = "en")
 parser.add_argument("--tg", type=str, default = "de")
-parser.add_argument("--bpe_end_token", action="store_true", help= "whether a special end token </w> is added while training bpe")
+parser.add_argument("--bpe_end_token", action="store_true", 
+                    help= "whether a special end token </w> is added while training bpe")
+parser.add_argument("--batch_first", action="store_false")
+parser.add_argument("--batch_size", type=int, default=16)
+parser.add_argument("--num_workers", type=int, default=1)
 
 args = parser.parse_args()
 
@@ -33,11 +41,40 @@ if __name__ == "__main__":
     # download and load the dataset
     dataset = load_dataset("iwslt2017", 'iwslt2017-en-de')
 
-    train_dataset = preprocess(dataset['train'], args.src, args.tg)
-    valid_dataset = preprocess(dataset['validation'], args.src, args.tg)
-    test_dataaset = preprocess(dataset['test'], args.src, args.tg)
+    # preprocess
+    train_data = preprocess(dataset['train'], args.src, args.tg)
+    valid_data = preprocess(dataset['validation'], args.src, args.tg)
+    test_data = preprocess(dataset['test'], args.src, args.tg)
 
-    src_tokenizer= Tokenizer(train_dataset, args.src, args.word_count, args.bpe_end_token)
-    tg_tokenizer = Tokenizer(train_dataset, args.tg, args.word_count, args.bpe_end_token)
+    # create tokenizer using BPE
+    src_tokenizer = Tokenizer(train_data, args.src, args.word_count, args.bpe_end_token)
+    tg_tokenizer = Tokenizer(train_data, args.tg, args.word_count, args.bpe_end_token)
 
-    # IwsltDataset(train_dataset, src_tokenizer, tg_tokenizer, args.src, args.tg)
+    # # BPE Test
+    # src_test = "I have been blown away by this conference, and I want to thank all of you \
+    # # for the many nice comments about what I had to say the other night."
+    # print(f"src_test: {src_test.split()} \n src_bpe: {src_tokenizer.bpe_tokenize(src_test)}\n")
+
+    # tg_test = "Ich bin wirklich begeistert von dieser Konferenz, und ich danke Ihnen allen \
+    # für die vielen netten Kommentare zu meiner Rede vorgestern Abend."
+    # print(f"tg_test: {tg_test.split()} \n tg_bpe: {tg_tokenizer.bpe_tokenize(tg_test)}\n")
+
+    # load dataloader
+    train_dataset = IwsltDataset(train_data, src_tokenizer, tg_tokenizer, args.src, args.tg)
+
+    # # load dataloader
+    pad_idx = src_tokenizer.stoi("<PAD>")
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers = args.num_workers,
+                                   shuffle=True, collate_fn=CustomCollate(pad_idx=pad_idx, batch_first=args.batch_first))
+    
+    # valid_dataloader = 
+    # test_dataloader = 
+
+    for step, batch in enumerate(train_dataloader):
+        inputs = {"input_ids": batch[0],
+                  "decoder_input_ids": batch[1],
+                  "attention_mask": batch[2]
+                  }
+
+        break
+    

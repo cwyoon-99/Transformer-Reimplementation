@@ -14,17 +14,22 @@ class Tokenizer:
         tokenized_input = self.bpe.subword_tokenize(input, self.merge_info)
 
         return tokenized_input
+    
+    def stoi(self, string):
+        if string in self.vocab:
+            return self.vocab.index(string)
+        else:
+            return self.vocab.index("[UNK]")
+
+    def itos(self, idx):
+        return self.vocab[idx]
 
     # Encode tokenized inputs into input_ids
     def encode(self, input_words):
         # map ids
         input_ids = []
         for token in input_words:
-            if token in self.vocab:
-                input_id = self.vocab.index(token)
-
-            else:
-                input_id = self.vocab.index("[UNK]")
+            input_id = self.stoi(token)
 
             input_ids.append(input_id) # assign input_id
 
@@ -34,7 +39,7 @@ class Tokenizer:
     def decode(self, input_ids):
         input_words = []
         for input_id in input_ids:
-            input_words.append(self.vocab[input_id])
+            input_words.append(self.itos(input_id))
 
         return input_words
 
