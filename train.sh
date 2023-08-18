@@ -1,1 +1,1 @@
-python train.py
+python train.py --num_workers 10

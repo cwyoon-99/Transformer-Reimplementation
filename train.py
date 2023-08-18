@@ -22,7 +22,7 @@ parser.add_argument("--bpe_end_token", action="store_true",
                     help= "whether a special end token </w> is added while training bpe")
 parser.add_argument("--batch_first", action="store_false")
 parser.add_argument("--batch_size", type=int, default=16)
-parser.add_argument("--num_workers", type=int, default=1)
+parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--model_config_dir", type=str, default="model_config.json", 
                     help="configuration directory of model")
 parser.add_argument("--train_config_dir", type=str, default="train_config.json",
@@ -30,8 +30,19 @@ parser.add_argument("--train_config_dir", type=str, default="train_config.json",
 
 args = parser.parse_args()
 
+# load config file
+with open(args.model_config_dir, 'r') as f:
+    model_config = json.load(f)
+
 with open(args.train_config_dir, 'r') as f:
     train_config = json.load(f)
+
+# Combine the arguments
+combined_args = vars(args)
+combined_args.update(train_config)
+combined_args.update(train_config)
+
+args = argparse.Namespace(**combined_args)
 
 if __name__ == "__main__":
 
@@ -77,26 +88,19 @@ if __name__ == "__main__":
     # valid_dataloader = 
     # test_dataloader = 
 
-    # load config file
-    with open(args.model_config_dir, 'r') as f:
-        model_config = json.load(f)
+    model = Transformer(args = args, pad_idx = pad_idx)
 
-    model_config
+    # # optimizer (Adam)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=, betas=(), eps=,)
 
-
-    # optimizer (Adam)
-    optimizer = torch.optim.Adam(model.parameters(), lr=, betas=(), eps=,)
-
-    # learning rate scheduler (warmup_steps)
-    schduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=lambda step: lr_lambda(step, warmup_steps))
+    # # learning rate scheduler (warmup_steps)
+    # schduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=lambda step: lr_lambda(step, warmup_steps))
 
     for step, batch in enumerate(train_dataloader):
         inputs = {"input_ids": batch[0],
                   "decoder_input_ids": batch[1],
                   "attention_mask": batch[2]
                   }
-
-
 
         break
 
