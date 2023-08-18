@@ -45,8 +45,7 @@ class CustomCollate:
         tg_ids = [i[1] for i in batch]
         decoder_input_ids = pad_sequence(tg_ids, batch_first=self.batch_first, padding_value=self.pad_idx)
 
-        # src Attention Mask
-        # if token == pad -> 0, else -> 1
+        # src Attention Mask (if token == pad -> 0, else -> 1)
         attention_mask = torch.where(input_ids == self.pad_idx, 0, 1)
 
         return input_ids, decoder_input_ids, attention_mask

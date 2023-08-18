@@ -4,12 +4,14 @@ from datasets import load_dataset
 
 import argparse
 import logging
+import json
+
+import torch
+from torch.utils.data import DataLoader
 
 from utils import preprocess
 from tokenizer import Tokenizer
 from dataset import IwsltDataset, CustomCollate
-
-from torch.utils.data import DataLoader
 
 parser = argparse.ArgumentParser()
 
@@ -21,9 +23,15 @@ parser.add_argument("--bpe_end_token", action="store_true",
 parser.add_argument("--batch_first", action="store_false")
 parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--num_workers", type=int, default=1)
+parser.add_argument("--model_config_dir", type=str, default="model_config.json", 
+                    help="configuration directory of model")
+parser.add_argument("--train_config_dir", type=str, default="train_config.json",
+                    help="configuration directory of training")
 
 args = parser.parse_args()
 
+with open(args.train_config_dir, 'r') as f:
+    train_config = json.load(f)
 
 if __name__ == "__main__":
 
@@ -62,7 +70,6 @@ if __name__ == "__main__":
     # load dataloader
     train_dataset = IwsltDataset(train_data, src_tokenizer, tg_tokenizer, args.src, args.tg)
 
-    # # load dataloader
     pad_idx = src_tokenizer.stoi("<PAD>")
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers = args.num_workers,
                                    shuffle=True, collate_fn=CustomCollate(pad_idx=pad_idx, batch_first=args.batch_first))
@@ -70,11 +77,38 @@ if __name__ == "__main__":
     # valid_dataloader = 
     # test_dataloader = 
 
+    # load config file
+    with open(args.model_config_dir, 'r') as f:
+        model_config = json.load(f)
+
+    model_config
+
+
+    # optimizer (Adam)
+    optimizer = torch.optim.Adam(model.parameters(), lr=, betas=(), eps=,)
+
+    # learning rate scheduler (warmup_steps)
+    schduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=lambda step: lr_lambda(step, warmup_steps))
+
     for step, batch in enumerate(train_dataloader):
         inputs = {"input_ids": batch[0],
                   "decoder_input_ids": batch[1],
                   "attention_mask": batch[2]
                   }
 
+
+
         break
+
+    # optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+    # scheduler = ExponentialLR(optimizer, gamma=0.9)
+
+    # for epoch in range(20):
+    #     for input, target in dataset:
+    #         optimizer.zero_grad()
+    #         output = model(input)
+    #         loss = loss_fn(output, target)
+    #         loss.backward()
+    #         optimizer.step()
+    #     scheduler.step()
     
