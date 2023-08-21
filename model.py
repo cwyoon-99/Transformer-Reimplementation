@@ -84,27 +84,30 @@ class ScaledDotProductAttention(nn.Module):
         super(ScaledDotProductAttention, self).__init__()
         self.softmax = nn.Softmax(dim = -1) # specify the dimension to compute softmax
 
-    def forward(self, Q, K, V):
-        # batch x n_head x seq_len x d_head
+    def forward(self, Q, K, V, mask):
+        # Q, K, V: batch x n_head x seq_len x d_head
+        # mask: batch x seq_len
         d_k = K.size(-1)
         K_transpose = K.permute(0,1,3,2)
 
         attention = torch.matmul(Q,K_transpose) / math.sqrt(d_k) # batch x n_head x seq_len x seq_len
+        masked_attetion = attention * mask
+
         softmax = self.softmax(attention)
 
         return torch.matmul(softmax, V) # batch x n_head x seq_len x d_head
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self,hidden_size, d_head, n_head):
+    def __init__(self,hidden_size, n_head, d_head):
         super(MultiHeadAttention, self).__init__()
         # (n_head x d_head = hidden_size)
+        self.hidden_size = hidden_size
         self.n_head = n_head
         self.d_head = d_head
-        self.hidden_size = hidden_size
 
         # Instead of n_head x 3 projections (hidden_size, d_head), 
-        # we define 3 integrated projections (hidden_size, hidden_size) and split them into each head
+        # define 3 integrated projections (hidden_size, hidden_size) and split them into each head
         self.q_proj = nn.Linear(hidden_size, hidden_size)
         self.k_proj = nn.Linear(hidden_size, hidden_size)
         self.v_proj = nn.Linear(hidden_size, hidden_size)
@@ -114,27 +117,78 @@ class MultiHeadAttention(nn.Module):
 
     def mh_convert(self, proj):
         # batch x seq_len x hidden_size -> batch x n_head x seq_len x d_head
-
         mh_split = torch.split(proj, self.d_head, dim=-1) # n_head tensors (batch x seq_len x d_head)  
         return torch.stack(mh_split, dim=1) # batch x n_head x seq_len x d_head
 
-    def forward(self, Q, K, V):
+    def forward(self, Q, K, V, mask):
         # linear projection
         q_projection = self.q_proj(Q)
         k_projection = self.k_proj(K)
         v_projection = self.v_proj(V)
 
         # multi head attention
-        mh_attention = self.dot_attention(self.mh_convert(q_projection),
+        mh_attention = self.dot_attention(self.mh_convert(q_projection), 
                                           self.mh_convert(k_projection),
-                                          self.mh_convert(v_projection)) # batch x n_head x seq_len x d_head
+                                          self.mh_convert(v_projection),
+                                          mask)
         
         # concat
         single_head = torch.split(mh_attention, 1, dim=1) # n_head tensors (batch x 1 x seq_len x d_head)
         concatenated = torch.cat(single_head, dim=-1).squeeze(1) # batch x seq_len x hidden_size
 
-        return self.last_proj(concatenated)
+        return self.last_proj(concatenated) # batch x seq_len x hidden_size
+    
+class PositionWiseFF(nn.Module):
+    def __init__(self, hidden_size, ff_size):
+        super(PositionWiseFF, self).__init__()
+        self.linear1 = nn.Linear(hidden_size, ff_size)
+        self.linear2 = nn.Linear(ff_size, hidden_size)
+        self.ReLU = nn.ReLU()
 
+    def forward(self, x):
+        # x: batch x seq_len x hidden_size
+        x = self.ReLU(self.linear1(x))
+        return self.linear2(x)
+    
+class Encoder(nn.Module):
+    def __init__(self, hidden_size, n_head, d_head, ff_size, dropout_prob):
+        super(Encoder, self).__init__()
+        self.mh_attention = MultiHeadAttention(hidden_size, n_head, d_head)
+        
+        self.ff_layer = PositionWiseFF(hidden_size, ff_size)
+
+        self.dropout = nn.Dropout(dropout_prob)
+        
+        self.l_norm1 = nn.LayerNorm(hidden_size)
+        self.l_norm2 = nn.LayerNorm(hidden_size)
+
+    def forward(self, x, src_mask):
+        sublayer_mh = self.mh_attention(Q = x, K = x, V = x, mask = src_mask)
+        sublayer_mh = self.dropout(sublayer_mh)
+        x = self.l_norm1(x + sublayer_mh)
+
+        sublayer_ff = self.ff_layer(x)
+        sublayer_ff = self.dropout(sublayer_ff)
+        return self.l_norm2(x + sublayer_ff)
+    
+class Decoder(nn.Module):
+    def __init__(self, hidden_size, n_head, d_head, ff_size, dropout_prob):
+        super(Decoder, self).__init__()
+        self.mh_attention1 = MultiHeadAttention(hidden_size, n_head, d_head)
+        self.mh_attention2 = MultiHeadAttention(hidden_size, n_head, d_head)
+
+        self.ff_layer = PositionWiseFF(hidden_size, ff_size)
+
+        self.dropout = nn.Dropout(dropout_prob)
+
+        self.l_norm1 = nn.LayerNorm(hidden_size)
+        self.l_norm2 = nn.LayerNorm(hidden_size)
+        self.l_norm3 = nn.LayerNorm(hidden_size)
+
+    def forward(self, y):
+        
+
+        
 class Transformer(nn.Module):
     def __init__(self, args, pad_idx):
         super(Transformer, self).__init__()
