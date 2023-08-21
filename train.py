@@ -101,11 +101,10 @@ if __name__ == "__main__":
                   "decoder_input_ids": batch[1],
                   "attention_mask": batch[2]
                   }
+        
+        model(inputs["input_ids"], inputs["attention_mask"])
 
         break
-
-    # optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
-    # scheduler = ExponentialLR(optimizer, gamma=0.9)
 
     # for epoch in range(20):
     #     for input, target in dataset:
