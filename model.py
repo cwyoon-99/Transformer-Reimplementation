@@ -3,6 +3,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+"""
+class
+    1. Embedding parts
+        PositionalEncoding
+        WordEmbedding
+    2. Multi-Head Attention (sublayer 1)
+        ScaledDotProductAttention
+        MultiHeadAttention
+    3. FF (sublayer 2)
+        PositionWiseFF
+    4. Model
+        Encoder
+        Decoder
+        EncoderStack
+        DecoderStack
+        Transformer
+"""
+
 class PositionalEncoding(nn.Module):
     def __init__(self, max_len, hidden_size):
         super(PositionalEncoding, self).__init__()
@@ -158,7 +176,7 @@ class Decoder(nn.Module):
         y = self.l_norm1(y + sublayer_mmh)
 
         # encoder-decoder attention
-        sublayer_ed_mh = self.mh_attention2(Q = x, K = x, V = y)
+        sublayer_ed_mh = self.mh_attention2(Q = y, K = x, V = x)
         sublayer_ed_mh = self.dropout(self.sublayer_ed_mmh)
         y = self.l_norm2(y + sublayer_ed_mh)
 
