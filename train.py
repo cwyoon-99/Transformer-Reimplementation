@@ -5,6 +5,7 @@ from datasets import load_dataset
 import argparse
 import logging
 import json
+from tqdm import tqdm
 
 import torch
 from torch.utils.data import DataLoader
@@ -12,6 +13,7 @@ from torch.utils.data import DataLoader
 from utils import preprocess
 from tokenizer import Tokenizer
 from dataset import IwsltDataset, CustomCollate
+from model import Transformer
 
 parser = argparse.ArgumentParser()
 
@@ -20,7 +22,6 @@ parser.add_argument("--src", type=str, default = "en")
 parser.add_argument("--tg", type=str, default = "de")
 parser.add_argument("--bpe_end_token", action="store_true", 
                     help= "whether a special end token </w> is added while training bpe")
-parser.add_argument("--batch_first", action="store_false")
 parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--model_config_dir", type=str, default="model_config.json", 
@@ -39,7 +40,7 @@ with open(args.train_config_dir, 'r') as f:
 
 # Combine the arguments
 combined_args = vars(args)
-combined_args.update(train_config)
+combined_args.update(model_config)
 combined_args.update(train_config)
 
 args = argparse.Namespace(**combined_args)
@@ -83,26 +84,39 @@ if __name__ == "__main__":
 
     pad_idx = src_tokenizer.stoi("<PAD>")
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers = args.num_workers,
-                                   shuffle=True, collate_fn=CustomCollate(pad_idx=pad_idx, batch_first=args.batch_first))
-    
-    # valid_dataloader = 
-    # test_dataloader = 
+                                   shuffle=True, collate_fn=CustomCollate(pad_idx=pad_idx, batch_first=True))
 
-    model = Transformer(args = args, pad_idx = pad_idx)
+    model = Transformer(hidden_size = args.hidden_size,
+                        n_head = args.num_attention_heads,
+                        d_head = args.num_hidden_size_per_head,
+                        ff_size = args.intermediate_size,
+                        dropout_prob= args.dropout_prob,
+                        n_layer = args.num_stack_layers,
+                        pad_idx = pad_idx,
+                        vocab_size = args.word_count,
+                        max_len = args.max_len
+                        )
 
-    # # optimizer (Adam)
-    # optimizer = torch.optim.Adam(model.parameters(), lr=, betas=(), eps=,)
+    # optimizer (Adam)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=, betas=(args.adam_b1, args.adam_b2), eps=args.adam_eps)
 
     # # learning rate scheduler (warmup_steps)
     # schduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=lambda step: lr_lambda(step, warmup_steps))
 
-    for step, batch in enumerate(train_dataloader):
+    logger.info(f"Start training ...")
+    for step, batch in enumerate(tqdm(train_dataloader)):
         inputs = {"input_ids": batch[0],
                   "decoder_input_ids": batch[1],
-                  "attention_mask": batch[2]
+                  "src_mask": batch[2],
+                  "tg_mask": batch[3]
                   }
         
-        model(inputs["input_ids"], inputs["attention_mask"])
+        outputs = model(inputs["input_ids"], 
+                inputs["src_mask"],
+                inputs["decoder_input_ids"],
+                inputs["tg_mask"])
+        
+        print(outputs.shape)
 
         break
 
