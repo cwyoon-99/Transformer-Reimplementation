@@ -27,7 +27,7 @@ class IwsltDataset(Dataset):
         src_ids = self.src_tokenizer.encode(src_words)
 
         tg_words = self.tg_tokenizer.bpe_tokenize(tg_text)
-        # tg_words.insert(0, "<SOS>") # don't need to generate SOS
+        tg_words.insert(0, "<SOS>") # don't need to generate SOS
         tg_words.append("<EOS>")
         tg_ids = self.tg_tokenizer.encode(tg_words)
         

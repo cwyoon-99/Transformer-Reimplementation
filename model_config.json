@@ -5,6 +5,5 @@
     "hidden_size": 512,
     "num_hidden_size_per_head": 64,
     "dropout_prob": 0.1,
-    "label_smooth_eps": 0.1,
     "max_len": 256
 }

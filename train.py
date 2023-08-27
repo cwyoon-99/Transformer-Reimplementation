@@ -8,6 +8,7 @@ import json
 from tqdm import tqdm
 
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from utils import preprocess
@@ -44,6 +45,44 @@ combined_args.update(model_config)
 combined_args.update(train_config)
 
 args = argparse.Namespace(**combined_args)
+
+def train_one_epoch(model, data_loader, optimizer, loss_fn):
+    model.train(True)
+    loss_interval = len(data_loader) // 10 # set the interval of loss
+
+    for step, batch in enumerate(tqdm(data_loader)):
+        running_loss = 0.
+        last_loss = 0.
+
+        inputs = {"input_ids": batch[0],
+                "decoder_input_ids": batch[1],
+                "src_mask": batch[2],
+                "tg_mask": batch[3]
+                }
+        
+        optimizer.zero_grad() # zero gradients for every batch
+        
+        outputs = model(inputs["input_ids"], 
+                inputs["src_mask"],
+                inputs["decoder_input_ids"][:,:-1], # exclude the last prediction (<EOS>)
+                inputs["tg_mask"][:,:-1])
+        
+        loss = loss_fn(outputs, inputs["decoder_input_ids"][:,1:]) # exclude the first output (<SOS>)
+
+        loss.backward()
+
+        optimizer.step() # adjust learning weights
+
+        # Gather data and report
+        running_loss += loss.item()
+        if step % loss_interval == loss_interval - 1:
+            last_loss = running_loss / loss_interval # loss per batch
+            logging.info('  batch {} loss: {}'.format(step + 1, last_loss))
+            # tb_x = epoch_index * len(data_loader) + step + 1
+            # tb_writer.add_scalar('Loss/train', last_loss, tb_x)
+            running_loss = 0.
+
+    return last_loss
 
 if __name__ == "__main__":
 
@@ -83,9 +122,12 @@ if __name__ == "__main__":
     train_dataset = IwsltDataset(train_data, src_tokenizer, tg_tokenizer, args.src, args.tg)
 
     pad_idx = src_tokenizer.stoi("<PAD>")
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers = args.num_workers,
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers = args.num_workers,
                                    shuffle=True, collate_fn=CustomCollate(pad_idx=pad_idx, batch_first=True))
 
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    # load model
     model = Transformer(hidden_size = args.hidden_size,
                         n_head = args.num_attention_heads,
                         d_head = args.num_hidden_size_per_head,
@@ -95,30 +137,20 @@ if __name__ == "__main__":
                         pad_idx = pad_idx,
                         vocab_size = args.word_count,
                         max_len = args.max_len
-                        )
+                        ).to(device)
+    
+    logger.info(f"Model Load Complete")
 
     # optimizer (Adam)
-    # optimizer = torch.optim.Adam(model.parameters(), lr=, betas=(args.adam_b1, args.adam_b2), eps=args.adam_eps)
+    optimizer = torch.optim.Adam(model.parameters(), lr=, betas=(args.adam_b1, args.adam_b2), eps=args.adam_eps)
 
-    # # learning rate scheduler (warmup_steps)
-    # schduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=lambda step: lr_lambda(step, warmup_steps))
+    # learning rate scheduler (warmup_steps)
+    schduler = torch.optim.lr_scheduler.LambdaLR(optimizer=optimizer, lr_lambda=lambda step: lr_lambda(step, warmup_steps))
+
+    # loss function
+    loss_fn = nn.CrossEntropyLoss(label_smoothing=args.label_smooth_eps)
 
     logger.info(f"Start training ...")
-    for step, batch in enumerate(tqdm(train_dataloader)):
-        inputs = {"input_ids": batch[0],
-                  "decoder_input_ids": batch[1],
-                  "src_mask": batch[2],
-                  "tg_mask": batch[3]
-                  }
-        
-        outputs = model(inputs["input_ids"], 
-                inputs["src_mask"],
-                inputs["decoder_input_ids"],
-                inputs["tg_mask"])
-        
-        print(outputs.shape)
-
-        break
 
     # for epoch in range(20):
     #     for input, target in dataset:

@@ -3,5 +3,6 @@
     "adam_b2": 0.98,
     "adam_eps": 10e-9,
     "num_train_step": 100000,
-    "train_warmup": 4000
+    "train_warmup": 4000,
+    "label_smooth_eps": 0.1
 }

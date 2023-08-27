@@ -29,7 +29,7 @@ class PositionalEncoding(nn.Module):
         _partial = 10000 ** (even_index / hidden_size)
 
         self.positional_encoding = torch.zeros(max_len, hidden_size) # seq_len x hidden_size
-        self.requires_grad = False # positional encoding is not training parameters
+        self.positional_encoding.requires_grad = False # positional encoding is not training parameters
 
         for pos in range(max_len):
             self.positional_encoding[pos,0::2] = torch.sin(pos / _partial)
@@ -60,26 +60,35 @@ class ScaledDotProductAttention(nn.Module):
         self.softmax = nn.Softmax(dim = -1) # specify the dimension to compute softmax
 
     def forward(self, Q, K, V, pad_mask, attn_mask):
-        # Q, K, V: batch x n_head x seq_len x d_head
-        # mask: batch x seq_len
-        d_k = K.size(-1)
+        # Q, K, V: batch x n_head x len x d_head
+        # pad_mask: batch x len
+        # attn_mask: batch x tg_len x tg_len
+        batch, _, q_len, _ = Q.size()
+        _, _, k_len, d_k = K.size()
+
         K_transpose = K.permute(0,1,3,2)
 
-        attention = torch.matmul(Q,K_transpose) / math.sqrt(d_k) # batch x n_head x seq_len x seq_len
+        attention = torch.matmul(Q,K_transpose) / math.sqrt(d_k) # batch x n_head x len x len
 
-        # mask <PAD> (for Encoder)
+        mask = torch.ones(batch, q_len, k_len)
+
+        # <PAD> masking
         if pad_mask is not None:
-            # batch x seq_len -> batch x seq_len x seq_len
-            expanded_pad_mask = pad_mask.unsqueeze(2) * pad_mask.unsqueeze(1)
-            attention = attention * expanded_pad_mask.unsqueeze(1)
+            expanded_pad_mask = pad_mask.unsqueeze(2) * pad_mask.unsqueeze(1) # batch x len x len
+            mask = mask * expanded_pad_mask
         
-        # mask auto-regressively (for Decoder)
+        # masked MH masking
         if attn_mask is not None:
-            attention = torch.where(attn_mask != 0, attention, -1e-9)
+            mask = mask * attn_mask
+
+        # print(mask.shape)
+        # print(attention.shape)
+
+        attention = torch.where(mask.unsqueeze(1) != 0, attention, torch.tensor(-1e-9, dtype=torch.float32))
 
         softmax = self.softmax(attention)
 
-        return torch.matmul(softmax, V) # batch x n_head x seq_len x d_head
+        return torch.matmul(softmax, V) # batch x n_head x len x d_head
 
 class MultiHeadAttention(nn.Module):
     def __init__(self,hidden_size, n_head, d_head):
@@ -172,7 +181,7 @@ class Decoder(nn.Module):
         self.l_norm3 = nn.LayerNorm(hidden_size)
 
     def forward(self, x, src_mask, y, tg_mask):
-        batch, tg_len = y.size()
+        batch, tg_len, _ = y.size()
 
         # Replace with torch.tril()
         # output_mask = (torch.eye(tg_len)).repeat(batch,1,1,1) # batch x 1 x tg_len x tg_len
@@ -180,7 +189,7 @@ class Decoder(nn.Module):
         #     output_mask[:,:,i,:i] = 1 # lower triangle part
 
         output_mask = torch.ones(batch, tg_len, tg_len)
-        output_mask = torch.tril(output_mask).unsqueeze(1) # batch x 1 x tg_len x tg_len
+        output_mask = torch.tril(output_mask) # batch x tg_len x tg_len
         
         # decoder masked attention
         sublayer_mmh = self.mh_attention1(Q = y, K = y, V = y, pad_mask = tg_mask, attn_mask = output_mask)
@@ -190,7 +199,7 @@ class Decoder(nn.Module):
         # encoder-decoder attention
         sublayer_ed_mh = self.mh_attention2(Q = y, K = x, V = x)
         # sublayer_ed_mh = self.mh_attention2(Q = y, K = x, V = x, pad_mask = src_mask) # pad_mask = src_mask?
-        sublayer_ed_mh = self.dropout(self.sublayer_ed_mmh)
+        sublayer_ed_mh = self.dropout(sublayer_ed_mh)
         y = self.l_norm2(y + sublayer_ed_mh)
 
         # feed-forward
