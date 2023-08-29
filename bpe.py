@@ -18,11 +18,7 @@ class BPE:
         os.makedirs(self.save_dir, exist_ok=True)
 
         for item in dataset:
-            # pre_corpus = item[self.mode].split(" ") # split by space (pre_tokenize)
-
-            # For German, various white-space characters exist. there replace all the white-space characters to avoid some exceptions.
-            normalized_item = re.sub(r'\s+', ' ', item[self.mode])
-            pre_corpus = normalized_item.split(" ") # split by space (pre_tokenize)
+            pre_corpus = item[self.mode].split(" ") # split by space (pre_tokenize)
 
             self.corpus.extend(pre_corpus)
 

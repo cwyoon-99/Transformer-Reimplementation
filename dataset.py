@@ -21,16 +21,29 @@ class IwsltDataset(Dataset):
         src_text = item[self.src]
         tg_text = item[self.tg]
 
-        src_words = self.src_tokenizer.bpe_tokenize(src_text)
-        src_words.insert(0, "<SOS>")
-        src_words.append("<EOS>")
-        src_ids = self.src_tokenizer.encode(src_words)
+        # # for self-implemented BPE
+        # src_words = self.src_tokenizer.bpe_tokenize(src_text)
+        # src_words.insert(0, "<SOS>")
+        # src_words.append("<EOS>")
+        # src_ids = self.src_tokenizer.encode(src_words)
 
-        tg_words = self.tg_tokenizer.bpe_tokenize(tg_text)
-        tg_words.insert(0, "<SOS>") # don't need to generate SOS
-        tg_words.append("<EOS>")
-        tg_ids = self.tg_tokenizer.encode(tg_words)
+        # tg_words = self.tg_tokenizer.bpe_tokenize(tg_text)
+        # tg_words.insert(0, "<SOS>")
+        # tg_words.append("<EOS>")
+        # tg_ids = self.tg_tokenizer.encode(tg_words)
+
+        # for imported BPE
+        sos_id = self.src_tokenizer.stoi("<SOS>")
+        eos_id = self.src_tokenizer.stoi("<EOS>")
         
+        src_ids = self.src_tokenizer.encode(src_text)
+        src_ids.insert(0, sos_id)
+        src_ids.append(eos_id)
+
+        tg_ids = self.tg_tokenizer.encode(tg_text)
+        tg_ids.insert(0, sos_id)
+        tg_ids.append(eos_id)
+
         return torch.tensor(src_ids), torch.tensor(tg_ids)
     
 class CustomCollate:
@@ -50,4 +63,4 @@ class CustomCollate:
 
         tg_mask = torch.where(decoder_input_ids == self.pad_idx, 0, 1)
 
-        return input_ids, decoder_input_ids, src_mask, tg_mask
+        return input_ids, decoder_input_ids, src_mask, tg_mask 

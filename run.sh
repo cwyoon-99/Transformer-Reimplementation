@@ -1,0 +1,1 @@
+python run.py --batch_size 48 --num_workers 15 --num_gpus 2

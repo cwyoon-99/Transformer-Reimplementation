@@ -1,4 +1,6 @@
 datasets
 torch==1.10.1+cu113
+lightning==1.9.0
+
 
 

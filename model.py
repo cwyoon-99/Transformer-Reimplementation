@@ -2,6 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import lightning.pytorch as pl
+from torchmetrics import Accuracy
+from torchmetrics.text import Perplexity, BLEUScore
+
+from utils import TransformerScheduler
 
 """
 class
@@ -26,18 +31,22 @@ class PositionalEncoding(nn.Module):
         super(PositionalEncoding, self).__init__()
 
         even_index = torch.arange(0, hidden_size, 2) # [0,2,4,6, ...]
-        _partial = 10000 ** (even_index / hidden_size)
+        partial = 10000 ** (even_index / hidden_size)
 
         self.positional_encoding = torch.zeros(max_len, hidden_size) # seq_len x hidden_size
         self.positional_encoding.requires_grad = False # positional encoding is not training parameters
 
         for pos in range(max_len):
-            self.positional_encoding[pos,0::2] = torch.sin(pos / _partial)
-            self.positional_encoding[pos,1::2] = torch.cos(pos / _partial)
+            self.positional_encoding[pos,0::2] = torch.sin(pos / partial)
+            self.positional_encoding[pos,1::2] = torch.cos(pos / partial)
 
     def forward(self, x):
-        # x: batch x seq_len 
+        # x: batch x seq_len
         seq_len = x.size(1)
+        
+        # set device of positional encoding
+        self.positional_encoding = self.positional_encoding.to(x.device)
+
         return self.positional_encoding[:seq_len, :].unsqueeze(0) # 1 x seq_len x hidden_size
 
 class WordEmbedding(nn.Module):
@@ -52,6 +61,7 @@ class WordEmbedding(nn.Module):
     def forward(self, x):
         # x: batch  x seq_len
         w_embedding = self.word_embedding(x) # batch x seq_len x hidden_size
+
         return w_embedding + self.positional_encoding(x) # add positional encoding to input embedding
     
 class ScaledDotProductAttention(nn.Module):
@@ -75,16 +85,16 @@ class ScaledDotProductAttention(nn.Module):
         # <PAD> masking
         if pad_mask is not None:
             expanded_pad_mask = pad_mask.unsqueeze(2) * pad_mask.unsqueeze(1) # batch x len x len
-            mask = mask * expanded_pad_mask
+            
+            mask = mask * expanded_pad_mask.to(mask.device)
         
         # masked MH masking
         if attn_mask is not None:
             mask = mask * attn_mask
 
-        # print(mask.shape)
-        # print(attention.shape)
-
-        attention = torch.where(mask.unsqueeze(1) != 0, attention, torch.tensor(-1e-9, dtype=torch.float32))
+        attention = torch.where(mask.unsqueeze(1).to(attention.device) != 0,
+                                attention,
+                                torch.tensor(-1e-9, dtype=torch.float32).to(attention.device))
 
         softmax = self.softmax(attention)
 
@@ -114,6 +124,9 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, Q, K, V, pad_mask = None, attn_mask = None):
         # linear projection
+        # print(f"Q.shape: {Q.shape}, input size: {self.q_proj.in_features}, output size: {self.q_proj.out_features}")
+        # print(f"K.shape: {Q.shape}, input size: {self.k_proj.in_features}, output size: {self.k_proj.out_features}")
+        # print(f"V.shape: {Q.shape}, input size: {self.v_proj.in_features}, output size: {self.v_proj.out_features}")
         q_projection = self.q_proj(Q)
         k_projection = self.k_proj(K)
         v_projection = self.v_proj(V)
@@ -255,10 +268,18 @@ class DecoderStack(nn.Module):
 
         return y
         
-class Transformer(nn.Module):
+class Transformer(pl.LightningModule):
     def __init__(self, hidden_size, n_head, d_head, ff_size, dropout_prob, n_layer, 
-                 pad_idx, vocab_size, max_len):
+                 pad_idx, vocab_size, max_len, lr, adam_betas, adam_eps, label_smooth_eps, warmup_steps,
+                 tg_tokenizer):
         super(Transformer, self).__init__()
+        self.save_hyperparameters()
+        
+        self.hidden_size = hidden_size
+        self.lr = lr
+        self.adam_betas = adam_betas
+        self.adam_eps = adam_eps
+        self.warmup_steps = warmup_steps
 
         self.encoders = EncoderStack(hidden_size, n_head, d_head, ff_size, dropout_prob, n_layer, 
                  pad_idx, vocab_size, max_len)
@@ -268,14 +289,94 @@ class Transformer(nn.Module):
         
         self.linear = nn.Linear(hidden_size, vocab_size)
 
-        self.softmax = nn.Softmax(dim=-1)
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index = pad_idx,
+                                           label_smoothing= label_smooth_eps)
 
-    def forward(self, input_ids, src_mask, output_ids, tg_mask):
+        self.accuracy_metric = Accuracy(task="multiclass", num_classes = vocab_size)
+        self.perplexity = Perplexity(ignore_index = pad_idx)
+        self.bleu = BLEUScore()
+
+        self.tokenizer = tg_tokenizer
+
+    # prepare
+    def pred_step(self, batch):
         # inputs: batch x seq_len
         # src_mask: batch x seq_len
         # outputs: batch x tg_len
         # tg_mask: batch x tg_len
-        x = self.encoders(input_ids, src_mask) # batch x seq_len x hidden_size
-        y = self.decoders(x, src_mask, output_ids, tg_mask) # batch x tg_len x hidden_size
+        input_ids, decoder_input_ids, src_mask, tg_mask = batch
+
+        x = self.encoders(input_ids, src_mask)
+        y = self.decoders(x, src_mask, decoder_input_ids[:,:-1], tg_mask[:,:-1]) # exclude the last prediction (<EOS>)
         y = self.linear(y) # batch x tg_len x vocab_size
-        return self.softmax(y) # batch x tg_len x vocab_size
+
+        loss = self.loss_fn(y.permute(0,2,1), decoder_input_ids[:, 1:])
+        perplexity = self.perplexity(y, decoder_input_ids[:, 1:])
+
+        return y, decoder_input_ids, loss, perplexity
+
+    def avg_epoch_end(self, outputs, mode):
+        for metric in outputs[0].keys():
+            avg_metric = torch.stack([x[metric] for x in outputs]).mean()
+
+            self.log(f'avg_{mode}_{metric}', round(avg_metric.item(), 4), sync_dist=True)
+
+    def bleu_step(self, y, decoder_input_ids):
+        output_ids = y.argmax(dim=-1) # batch x len x vocab_size -> batch x len
+        label_ids = decoder_input_ids[:,1:]
+
+        bleu_step = []
+        for (output_batch, label_batch) in zip(output_ids, label_ids):
+            output_words = self.tokenizer.decode(output_batch.tolist())
+            label_words = self.tokenizer.decode(label_batch.tolist())
+
+            # print(f"output_words: {output_words}")
+            # print(f"label_words: {label_words}")
+
+            bleu_step.append(self.bleu([output_words], [[label_words]]))
+        
+        return sum(bleu_step) / len(bleu_step)
+
+    # train loop
+    def training_step(self, batch, batch_idx):
+        _, _, loss, perplexity = self.pred_step(batch)
+
+        return {'loss': loss, 'pp': perplexity}
+    
+    def training_epoch_end(self, outputs):
+        self.avg_epoch_end(outputs, "train")
+
+        return
+    
+    # validation loop
+    def validation_step(self, batch, batch_idx):
+        y, decoder_input_ids, loss, perplexity = self.pred_step(batch)
+
+        bleu = self.bleu_step(y, decoder_input_ids)
+
+        return {'loss': loss, 'pp': perplexity, 'bleu': bleu}
+
+    # called at the end of the validation epoch
+    def validation_epoch_end(self, outputs):
+        self.avg_epoch_end(outputs, "val")
+
+        return
+
+    # test loop
+    def test_step(self, batch, batch_idx):
+        y, decoder_input_ids, loss, perplexity = self.pred_step(batch)
+
+        bleu = self.bleu_step(y, decoder_input_ids)
+
+        return {'loss': loss, 'pp': perplexity, 'bleu': bleu}
+
+    def test_epoch_end(self, outputs):
+        self.avg_epoch_end(outputs, "test")
+
+        return
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, betas=self.adam_betas, eps=self.adam_eps)
+        scheduler = TransformerScheduler(optimizer, self.hidden_size, self.warmup_steps, verbose=True)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
+        # return {"optimizer": optimizer}
