@@ -7,12 +7,16 @@ from tqdm import tqdm
 import os
 import time
 
+# os.environ["CUDA_VISIBLE_DEVICES"]="1"
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import lightning.pytorch as pl
-from lightning.pytorch.loggers import CSVLogger
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+
 
 from utils import preprocess
 from tokenizer import Tokenizer, TokenizerImport
@@ -64,7 +68,7 @@ if __name__ == "__main__":
 
     # download and load the dataset
     logger.info("load dataset...")
-    dataset = load_dataset("iwslt2017", 'iwslt2017-en-de')
+    dataset = load_dataset("iwslt2017", 'iwslt2017-en-de', data_dir="data/")
 
     # preprocess
     train_data = preprocess(dataset['train'], args.src, args.tg)
@@ -91,7 +95,8 @@ if __name__ == "__main__":
     # print(f"tg_test: {tg_test.split()} \n tg_bpe: {tg_tokenizer.bpe_tokenize(tg_test)}\n")
 
     # load data
-    train_dataset = IwsltDataset(train_data[:1000], src_tokenizer, tg_tokenizer, args.src, args.tg)
+    # train_dataset = IwsltDataset(train_data[:1000], src_tokenizer, tg_tokenizer, args.src, args.tg)
+    train_dataset = IwsltDataset(train_data, src_tokenizer, tg_tokenizer, args.src, args.tg)
     valid_dataset = IwsltDataset(valid_data, src_tokenizer, tg_tokenizer, args.src, args.tg)
     test_dataset = IwsltDataset(test_data, src_tokenizer, tg_tokenizer, args.src, args.tg)
 
@@ -132,16 +137,26 @@ if __name__ == "__main__":
     exp_name = f"{cur_time}_{args.model_name}"
     logger = CSVLogger(args.log_dir, name=exp_name)
 
+    tb_logger = TensorBoardLogger("tb_logs", name=exp_name)
+    # wandb_logger= WandbLogger("wandb_logs", name=exp_name)
+
     # callbacks
-    os.makedirs(args.model_ckpt_dir, exist_ok=True)
+    early_stop_callback = EarlyStopping(
+        monitor="avg_val_pp",
+        min_delta=0.00,
+        patience=10,
+        mode="min")
+
     checkpoint_callback = ModelCheckpoint(
             dirpath= os.path.join(args.log_dir, exp_name),
-            filename="{avg_val_loss:.4f}_{avg_val_pp:.4f}_{avg_val_bleu:.4f}",
-            save_top_k=3,
-            monitor="avg_val_bleu",
+            filename="{epoch}_{avg_val_loss:.4f}_{avg_val_pp:.4f}_{avg_val_bleu:.4f}",
+            save_top_k=2,
+            monitor="avg_val_pp",
             mode="min",
         )
-    callbacks = [checkpoint_callback]
+    
+    lr_monitor = LearningRateMonitor(logging_interval='step')
+    callbacks = [early_stop_callback, checkpoint_callback, lr_monitor]
 
     # trainer
     trainer = pl.Trainer(max_epochs = args.num_epochs,
@@ -149,7 +164,8 @@ if __name__ == "__main__":
                          devices = args.num_gpus,
                          strategy = "ddp_find_unused_parameters_false",
                         #  strategy = "ddp",
-                         logger = logger,
+                         logger = [logger, tb_logger],
+                        # logger = [logger, wandb_logger],
                          callbacks = callbacks,
                          )
     

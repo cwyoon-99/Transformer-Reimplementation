@@ -341,12 +341,12 @@ class Transformer(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         _, _, loss, perplexity = self.pred_step(batch)
 
-        return {'loss': loss, 'pp': perplexity}
+        return {'loss': loss, 'log': {'train_loss': loss.detach(), 'train_pp': perplexity.detach()}}
     
-    def training_epoch_end(self, outputs):
-        self.avg_epoch_end(outputs, "train")
+    # def training_epoch_end(self, outputs):
+    #     self.avg_epoch_end(outputs, "train")
 
-        return
+    #     return
     
     # validation loop
     def validation_step(self, batch, batch_idx):
@@ -379,4 +379,3 @@ class Transformer(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, betas=self.adam_betas, eps=self.adam_eps)
         scheduler = TransformerScheduler(optimizer, self.hidden_size, self.warmup_steps, verbose=True)
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
-        # return {"optimizer": optimizer}

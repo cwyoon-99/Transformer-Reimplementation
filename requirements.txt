@@ -1,6 +1,7 @@
 datasets
-torch==1.10.1+cu113
+tokenizers
 lightning==1.9.0
+tensorboard
 
 
 
